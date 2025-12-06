@@ -1,8 +1,6 @@
 #!/bin/bash
 
 # Script per aggiornare le Point Releases (Minor) o Versioni Major (Major) di Debian in remoto.
-# Esempio: ./update-os-lxc.sh all chimaera (per aggiornare da trixie a chimaera)
-# Esempio: ./update-os-lxc.sh all (per aggiornare solo le patch di trixie)
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -10,6 +8,7 @@ YELLOW='\033[0;33m'
 NC='\033[0m'
 
 # Variabile del nome in codice ATTUALE (da cui stai aggiornando)
+# ASSICURATI DI MODIFICARE QUESTA VARIABILE PRIMA DI UN MAJOR UPGRADE!
 CURRENT_CODENAME="trixie"
 
 # Nome in codice della NUOVA versione (Se specificato come secondo argomento)
@@ -61,23 +60,37 @@ update_lxc() {
     echo -e "${YELLOW}================================================================${NC}"
 }
 
-# --- Logica di Parsing degli Argomenti ---
-if [ "$#" -eq 0 ] || [ "$1" != "all" ]; then
-    echo "Uso: $0 all [nuovo_nome_in_codice]"
-    echo "Esempio Minor Upgrade: $0 all"
+# --- Logica di Parsing degli Argomenti CORRETTA ---
+
+# 1. Controllo base: Deve essere fornito almeno un argomento
+if [ "$#" -eq 0 ]; then
+    echo "Uso: $0 <all|ID_LXC> [nuovo_nome_in_codice]"
+    echo "Esempio Minor Upgrade di un ID: $0 100"
+    echo "Esempio Minor Upgrade di tutti: $0 all"
     echo "Esempio Major Upgrade: $0 all chimaera"
     exit 1
 fi
 
-if [ "$1" == "all" ]; then
+# 2. Assegnazione della LXC_LIST in base all'argomento
+if [[ "$1" == "all" ]]; then
     echo -e "${GREEN}Trovati tutti i container in esecuzione...${NC}"
+    # Se 'all', popola la lista con tutti gli ID running
     LXC_LIST=$(/usr/sbin/pct list | grep running | awk '{print $1}')
+elif [[ "$1" =~ ^[0-9]+$ ]]; then
+    # Se è un ID numerico, popola la lista solo con quell'ID
+    LXC_LIST="$1"
+    echo -e "${GREEN}Inizio aggiornamento per LXC ID ${LXC_LIST}...${NC}"
 else
-    # Questa sezione è solo per completezza, ma forziamo l'uso di "all" o di ID specifici.
-    LXC_LIST="$@"
+    # Se non è 'all' né un ID numerico
+    echo -e "${RED}ERRORE: Argomento non valido. Deve essere 'all' o un ID LXC numerico.${NC}"
+    echo "Uso: $0 <all|ID_LXC> [nuovo_nome_in_codice]"
+    echo "Esempio Minor Upgrade di un ID: $0 100"
+    echo "Esempio Minor Upgrade di tutti: $0 all"
+    echo "Esempio Major Upgrade: $0 all chimaera"
+    exit 1
 fi
 
-# Esegue la funzione di aggiornamento per ogni ID
+# Esegue la funzione di aggiornamento per ogni ID nella lista
 for ID in $LXC_LIST; do
     update_lxc $ID
 done
