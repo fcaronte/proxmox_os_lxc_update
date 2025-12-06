@@ -7,9 +7,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 NC='\033[0m'
 
-# Variabile del nome in codice ATTUALE (da cui stai aggiornando)
-# ASSICURATI DI MODIFICARE QUESTA VARIABILE PRIMA DI UN MAJOR UPGRADE!
-CURRENT_CODENAME="trixie"
+# Variabile del nome in codice ATTUALE di default (per aggiornamenti multipli)
+# Modifica questo valore per il nome in codice della maggior parte dei tuoi LXC (es. "bookworm" o "trixie")
+CURRENT_CODENAME_DEFAULT="trixie"
 
 # Nome in codice della NUOVA versione (Se specificato come secondo argomento)
 NEW_CODENAME=$2
@@ -20,6 +20,9 @@ UPDATE_CMD="apt update -y && apt upgrade -y && apt full-upgrade -y && apt autore
 # --- Funzione di Aggiornamento ---
 update_lxc() {
     LXC_ID=$1
+    # La variabile $3 (argomento opzionale) è la versione di partenza, usa il default se non specificata.
+    CURRENT_CODENAME_USED=${3:-$CURRENT_CODENAME_DEFAULT}
+    
     echo -e "${YELLOW}================================================================${NC}"
     echo -e "${GREEN}### Inizio elaborazione LXC ID ${LXC_ID}... ###${NC}"
 
@@ -31,10 +34,10 @@ update_lxc() {
     
     # 1. GESTIONE AGGIORNAMENTO MAJOR (Se è stato specificato un nuovo nome in codice)
     if [ ! -z "$NEW_CODENAME" ]; then
-        echo -e "${YELLOW}!!! Preparazione Aggiornamento MAJOR: ${CURRENT_CODENAME} -> ${NEW_CODENAME} !!!${NC}"
+        echo -e "${YELLOW}!!! Preparazione Aggiornamento MAJOR: ${CURRENT_CODENAME_USED} -> ${NEW_CODENAME} !!!${NC}"
         
-        # Aggiorna i repository nel container da trixie a chimaera
-        MOD_CMD="sed -i 's/${CURRENT_CODENAME}/${NEW_CODENAME}/g' /etc/apt/sources.list"
+        # Aggiorna i repository nel container da CURRENT_CODENAME_USED a NEW_CODENAME
+        MOD_CMD="sed -i 's/${CURRENT_CODENAME_USED}/${NEW_CODENAME}/g' /etc/apt/sources.list"
         echo -e "${YELLOW} -> Modifica Sources.list: ${MOD_CMD}${NC}"
         
         /usr/sbin/pct exec $LXC_ID -- bash -c "$MOD_CMD" | cat
@@ -48,7 +51,6 @@ update_lxc() {
     # 2. Esegue i comandi di aggiornamento (Major o Minor)
     echo -e "${YELLOW} -> Esecuzione: ${UPDATE_CMD}${NC}"
     
-    # pct exec esegue il comando e | cat forza l'output immediato
     /usr/sbin/pct exec $LXC_ID -- bash -c "$UPDATE_CMD" | cat
 
     if [[ $? -eq 0 ]]; then
@@ -60,39 +62,43 @@ update_lxc() {
     echo -e "${YELLOW}================================================================${NC}"
 }
 
-# --- Logica di Parsing degli Argomenti CORRETTA ---
+# --- Logica di Parsing degli Argomenti ---
 
-# 1. Controllo base: Deve essere fornito almeno un argomento
 if [ "$#" -eq 0 ]; then
-    echo "Uso: $0 <all|ID_LXC> [nuovo_nome_in_codice]"
-    echo "Esempio Minor Upgrade di un ID: $0 100"
-    echo "Esempio Minor Upgrade di tutti: $0 all"
-    echo "Esempio Major Upgrade: $0 all chimaera"
+    echo "Uso: $0 <all|ID_LXC> [nuovo_nome_in_codice] [vecchio_nome_in_codice]"
+    echo "Esempio Minor Upgrade (patch): $0 100"
+    echo "Esempio Major Upgrade (tutti da default a nuovo): $0 all chimaera"
+    echo "Esempio Major Upgrade (singolo da bookworm a trixie): $0 100 trixie bookworm"
     exit 1
 fi
 
-# 2. Assegnazione della LXC_LIST in base all'argomento
+# 2. Assegnazione e Loop
+
 if [[ "$1" == "all" ]]; then
+    # Scenario 1: Aggiorna TUTTI (usando il default per la versione corrente)
     echo -e "${GREEN}Trovati tutti i container in esecuzione...${NC}"
-    # Se 'all', popola la lista con tutti gli ID running
     LXC_LIST=$(/usr/sbin/pct list | grep running | awk '{print $1}')
+    
+    for ID in $LXC_LIST; do
+        # Passa solo ID e NUOVO_CODENAME. CURRENT_CODENAME viene preso da DEFAULT
+        update_lxc $ID $NEW_CODENAME
+    done
+    
 elif [[ "$1" =~ ^[0-9]+$ ]]; then
-    # Se è un ID numerico, popola la lista solo con quell'ID
-    LXC_LIST="$1"
-    echo -e "${GREEN}Inizio aggiornamento per LXC ID ${LXC_LIST}...${NC}"
+    # Scenario 2: Aggiorna SINGOLO ID
+    LXC_ID_SINGLE="$1"
+    
+    echo -e "${GREEN}Inizio aggiornamento per LXC ID ${LXC_ID_SINGLE}...${NC}"
+
+    # Passa ID, NUOVO_CODENAME ($2), e la versione corrente opzionale ($3)
+    update_lxc $LXC_ID_SINGLE $NEW_CODENAME $3
+
 else
-    # Se non è 'all' né un ID numerico
+    # Scenario 3: Argomento non valido
     echo -e "${RED}ERRORE: Argomento non valido. Deve essere 'all' o un ID LXC numerico.${NC}"
-    echo "Uso: $0 <all|ID_LXC> [nuovo_nome_in_codice]"
-    echo "Esempio Minor Upgrade di un ID: $0 100"
-    echo "Esempio Minor Upgrade di tutti: $0 all"
-    echo "Esempio Major Upgrade: $0 all chimaera"
+    echo "Uso: $0 <all|ID_LXC> [nuovo_nome_in_codice] [vecchio_nome_in_codice]"
+    echo "Esempio Major Upgrade (singolo da bookworm a trixie): $0 100 trixie bookworm"
     exit 1
 fi
-
-# Esegue la funzione di aggiornamento per ogni ID nella lista
-for ID in $LXC_LIST; do
-    update_lxc $ID
-done
 
 echo -e "${GREEN}Tutte le operazioni completate.${NC}"
