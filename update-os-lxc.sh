@@ -2,7 +2,7 @@
 
 # ======================================================================
 # SCRIPT: update-debian.sh
-# VERSIONE: 2.0.0 (Hybrid GUI/CLI for Debian Major/Minor Updates)
+# VERSIONE: 2.1.0 (GUI/CLI with Snapshot Management)
 # ======================================================================
 
 # --- COLORI ---
@@ -17,13 +17,17 @@ CURRENT_CODENAME_DEFAULT="trixie"
 SNAP_PREFIX="DEB_UPGRADE_SNAP"
 UPDATE_CMD="apt update -y && apt upgrade -y && apt full-upgrade -y && apt autoremove --purge -y"
 
+# Variabili di stato
+SKIP_SNAPSHOT=false
+CLEAN_SNAPSHOT=false
+
 # --- FUNZIONE HELP ---
 show_help() {
-    echo -e "${CYAN}Utilizzo CLI:${NC} $0 <all|ID_LXC> [nuovo_codename] [vecchio_codename]"
-    echo -e "  $0 100               (Minor Update / Patches)"
-    echo -e "  $0 all trixie        (Major Update: tutti da default a trixie)"
-    echo -e "  $0 100 trixie bookworm (Major Update specifico)"
-    echo -e "\n${CYAN}Info:${NC} Avvia senza argomenti per l'interfaccia grafica."
+    echo -e "${CYAN}Utilizzo CLI:${NC} $0 <all|ID_LXC> [nuovo_codename] [opzioni]"
+    echo -e "Opzioni:"
+    echo -e "  --no-snap      Salta la creazione dello snapshot"
+    echo -e "  --clean        Rimuovi lo snapshot se l'aggiornamento riesce"
+    echo -e "\nEsempio Major con pulizia: $0 100 trixie --clean"
     exit 0
 }
 
@@ -32,6 +36,7 @@ update_lxc() {
     local LXC_ID=$1
     local NEW_CODENAME=$2
     local OLD_CODENAME=${3:-$CURRENT_CODENAME_DEFAULT}
+    local CURRENT_SNAP=""
     
     echo -e "\n${CYAN}----------------------------------------------------------------${NC}"
     echo -e "${GREEN}### Elaborazione LXC ID ${LXC_ID}... ###${NC}"
@@ -42,19 +47,20 @@ update_lxc() {
         return
     fi
 
-    # 1. Creazione Snapshot di sicurezza
-    local SNAP_NAME="${SNAP_PREFIX}_$(date +%Y%m%d_%H%M%S)"
-    echo -e "${YELLOW}-> Creazione snapshot: $SNAP_NAME...${NC}"
-    if ! pct snapshot $LXC_ID "$SNAP_NAME" --description "Pre-upgrade Debian script"; then
-        echo -e "${RED}ERRORE: Impossibile creare lo snapshot. Interruzione per sicurezza.${NC}"
-        return
+    # 1. Gestione Snapshot
+    if [ "$SKIP_SNAPSHOT" = false ]; then
+        CURRENT_SNAP="${SNAP_PREFIX}_$(date +%Y%m%d_%H%M%S)"
+        echo -e "${YELLOW}-> Creazione snapshot: $CURRENT_SNAP...${NC}"
+        if ! pct snapshot $LXC_ID "$CURRENT_SNAP" --description "Pre-upgrade Debian script"; then
+            echo -e "${RED}ERRORE: Impossibile creare lo snapshot. Interruzione.${NC}"
+            return
+        fi
     fi
 
-    # 2. Gestione Major Upgrade (sed)
-    if [ ! -z "$NEW_CODENAME" ]; then
+    # 2. Gestione Major Upgrade
+    if [[ ! -z "$NEW_CODENAME" && "$NEW_CODENAME" != "--clean" && "$NEW_CODENAME" != "--no-snap" ]]; then
         echo -e "${YELLOW}!!! MAJOR UPGRADE: ${OLD_CODENAME} -> ${NEW_CODENAME} !!!${NC}"
-        MOD_CMD="sed -i 's/${OLD_CODENAME}/${NEW_CODENAME}/g' /etc/apt/sources.list"
-        pct exec $LXC_ID -- bash -c "$MOD_CMD"
+        pct exec $LXC_ID -- bash -c "sed -i 's/${OLD_CODENAME}/${NEW_CODENAME}/g' /etc/apt/sources.list"
     fi
 
     # 3. Esecuzione Aggiornamento
@@ -62,10 +68,18 @@ update_lxc() {
     pct exec $LXC_ID -- bash -c "export DEBIAN_FRONTEND=noninteractive && $UPDATE_CMD"
 
     if [[ $? -eq 0 ]]; then
-        echo -e "${GREEN}Aggiornamento completato. Riavvio in corso...${NC}"
+        echo -e "${GREEN}Aggiornamento completato.${NC}"
+        
+        # Pulizia snapshot se richiesto
+        if [[ "$CLEAN_SNAPSHOT" = true && ! -z "$CURRENT_SNAP" ]]; then
+            echo -e "${YELLOW}-> Pulizia snapshot temporaneo...${NC}"
+            pct delsnapshot $LXC_ID "$CURRENT_SNAP"
+        fi
+        
+        echo -e "${GREEN}Riavvio in corso...${NC}"
         pct reboot $LXC_ID
     else
-        echo -e "${RED}ERRORE durante l'aggiornamento. Ripristinare lo snapshot $SNAP_NAME se necessario.${NC}"
+        echo -e "${RED}ERRORE nell'aggiornamento. Snapshot $CURRENT_SNAP conservato.${NC}"
     fi
 }
 
@@ -81,49 +95,45 @@ if [ "$#" -eq 0 ]; then
     CHOICES=$(echo "$CHOICES" | tr -d '"')
     [[ " $CHOICES " == *" ALL "* ]] && CHOICES="all"
 
-    # 2. Scelta Tipo Aggiornamento
+    # 2. Scelta Opzioni Snapshot
+    SNAP_OPTS=$(whiptail --title "Gestione Snapshot" --checklist "Opzioni di sicurezza:" 15 60 2 \
+        "nosnap" "Salta creazione snapshot" OFF \
+        "clean" "Rimuovi snapshot se OK" ON 3>&1 1>&2 2>&3)
+    
+    [[ "$SNAP_OPTS" == *"nosnap"* ]] && SKIP_SNAPSHOT=true
+    [[ "$SNAP_OPTS" == *"clean"* ]] && CLEAN_SNAPSHOT=true
+
+    # 3. Scelta Tipo Aggiornamento
     UP_TYPE=$(whiptail --title "Tipo di Aggiornamento" --menu "Cosa vuoi fare?" 15 60 4 \
-        "MINOR" "Patch e upgrade della versione attuale" \
-        "MAJOR" "Cambio di versione (es. bookworm -> trixie)" 3>&1 1>&2 2>&3)
+        "MINOR" "Patch e upgrade attuale" \
+        "MAJOR" "Cambio versione (es. bookworm -> trixie)" 3>&1 1>&2 2>&3)
     
     NEW_CN=""
-    OLD_CN=""
-
     if [ "$UP_TYPE" == "MAJOR" ]; then
-        OLD_CN=$(whiptail --inputbox "Codename ATTUALE (es. bookworm):" 10 60 "$CURRENT_CODENAME_DEFAULT" 3>&1 1>&2 2>&3)
         NEW_CN=$(whiptail --inputbox "Codename NUOVO (es. trixie):" 10 60 "" 3>&1 1>&2 2>&3)
-        [ -z "$NEW_CN" ] && { echo "Annullato: Codename mancante."; exit 1; }
+        [ -z "$NEW_CN" ] && exit 1
     fi
 
-    # Esecuzione Loop GUI
-    LXC_LIST=""
-    if [ "$CHOICES" == "all" ]; then
-        LXC_LIST=$(pct list | grep running | awk '{print $1}')
-    else
-        LXC_LIST=$CHOICES
-    fi
-
-    for ID in $LXC_LIST; do
-        update_lxc "$ID" "$NEW_CN" "$OLD_CN"
-    done
-    echo -e "\n${GREEN}Tutte le operazioni completate.${NC}"
+    # Esecuzione Loop
+    LXC_LIST=$([[ "$CHOICES" == "all" ]] && pct list | grep running | awk '{print $1}' || echo $CHOICES)
+    for ID in $LXC_LIST; do update_lxc "$ID" "$NEW_CN"; done
     exit 0
 fi
 
-# --- LOGICA CLI (Se vengono passati argomenti) ---
+# --- LOGICA CLI ---
+# Parsing basico opzioni
+[[ "$*" == *"--no-snap"* ]] && SKIP_SNAPSHOT=true
+[[ "$*" == *"--clean"* ]] && CLEAN_SNAPSHOT=true
+
 case "$1" in
-    -h|--help) show_help ;;
     all)
         LXC_LIST=$(pct list | grep running | awk '{print $1}')
         for ID in $LXC_LIST; do update_lxc "$ID" "$2"; done
         ;;
+    [0-9]*)
+        update_lxc "$1" "$2" "$3"
+        ;;
     *)
-        if [[ "$1" =~ ^[0-9]+$ ]]; then
-            update_lxc "$1" "$2" "$3"
-        else
-            show_help
-        fi
+        show_help
         ;;
 esac
-
-echo -e "\n${GREEN}Operazioni completate.${NC}"
