@@ -1,104 +1,129 @@
 #!/bin/bash
 
-# Script per aggiornare le Point Releases (Minor) o Versioni Major (Major) di Debian in remoto.
+# ======================================================================
+# SCRIPT: update-debian.sh
+# VERSIONE: 2.0.0 (Hybrid GUI/CLI for Debian Major/Minor Updates)
+# ======================================================================
 
+# --- COLORI ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Variabile del nome in codice ATTUALE di default (per aggiornamenti multipli)
-# Modifica questo valore per il nome in codice della maggior parte dei tuoi LXC (es. "bookworm" o "trixie")
+# --- DEFAULT ---
 CURRENT_CODENAME_DEFAULT="trixie"
-
-# Nome in codice della NUOVA versione (Se specificato come secondo argomento)
-NEW_CODENAME=$2
-
-# Comando base di aggiornamento
+SNAP_PREFIX="DEB_UPGRADE_SNAP"
 UPDATE_CMD="apt update -y && apt upgrade -y && apt full-upgrade -y && apt autoremove --purge -y"
 
-# --- Funzione di Aggiornamento ---
-update_lxc() {
-    LXC_ID=$1
-    # La variabile $3 (argomento opzionale) è la versione di partenza, usa il default se non specificata.
-    CURRENT_CODENAME_USED=${3:-$CURRENT_CODENAME_DEFAULT}
-    
-    echo -e "${YELLOW}================================================================${NC}"
-    echo -e "${GREEN}### Inizio elaborazione LXC ID ${LXC_ID}... ###${NC}"
-
-    STATUS=$(/usr/sbin/pct status $LXC_ID 2>/dev/null)
-    if [[ $? -ne 0 || "$STATUS" != "status: running" ]]; then
-        echo -e "${RED}ATTENZIONE: LXC ID ${LXC_ID} non trovato, spento o bloccato. SKIPPATO.${NC}"
-        return
-    fi
-    
-    # 1. GESTIONE AGGIORNAMENTO MAJOR (Se è stato specificato un nuovo nome in codice)
-    if [ ! -z "$NEW_CODENAME" ]; then
-        echo -e "${YELLOW}!!! Preparazione Aggiornamento MAJOR: ${CURRENT_CODENAME_USED} -> ${NEW_CODENAME} !!!${NC}"
-        
-        # Aggiorna i repository nel container da CURRENT_CODENAME_USED a NEW_CODENAME
-        MOD_CMD="sed -i 's/${CURRENT_CODENAME_USED}/${NEW_CODENAME}/g' /etc/apt/sources.list"
-        echo -e "${YELLOW} -> Modifica Sources.list: ${MOD_CMD}${NC}"
-        
-        /usr/sbin/pct exec $LXC_ID -- bash -c "$MOD_CMD" | cat
-        
-        if [[ $? -ne 0 ]]; then
-            echo -e "${RED}ERRORE: La modifica di sources.list è fallita.${NC}"
-            return
-        fi
-    fi
-
-    # 2. Esegue i comandi di aggiornamento (Major o Minor)
-    echo -e "${YELLOW} -> Esecuzione: ${UPDATE_CMD}${NC}"
-    
-    /usr/sbin/pct exec $LXC_ID -- bash -c "$UPDATE_CMD" | cat
-
-    if [[ $? -eq 0 ]]; then
-        echo -e "${GREEN}Aggiornamento LXC ID ${LXC_ID} completato. Riavvio in corso...${NC}"
-        /usr/sbin/pct reboot $LXC_ID
-    else
-        echo -e "${RED}ERRORE nell'aggiornamento di LXC ID ${LXC_ID}. Controllare l'output sopra.${NC}"
-    fi
-    echo -e "${YELLOW}================================================================${NC}"
+# --- FUNZIONE HELP ---
+show_help() {
+    echo -e "${CYAN}Utilizzo CLI:${NC} $0 <all|ID_LXC> [nuovo_codename] [vecchio_codename]"
+    echo -e "  $0 100               (Minor Update / Patches)"
+    echo -e "  $0 all trixie        (Major Update: tutti da default a trixie)"
+    echo -e "  $0 100 trixie bookworm (Major Update specifico)"
+    echo -e "\n${CYAN}Info:${NC} Avvia senza argomenti per l'interfaccia grafica."
+    exit 0
 }
 
-# --- Logica di Parsing degli Argomenti ---
+# --- FUNZIONE CORE DI AGGIORNAMENTO ---
+update_lxc() {
+    local LXC_ID=$1
+    local NEW_CODENAME=$2
+    local OLD_CODENAME=${3:-$CURRENT_CODENAME_DEFAULT}
+    
+    echo -e "\n${CYAN}----------------------------------------------------------------${NC}"
+    echo -e "${GREEN}### Elaborazione LXC ID ${LXC_ID}... ###${NC}"
 
+    STATUS=$(pct status $LXC_ID 2>/dev/null)
+    if [[ $? -ne 0 || "$STATUS" != "status: running" ]]; then
+        echo -e "${RED}SKIPPATO: LXC ${LXC_ID} non trovato o non attivo.${NC}"
+        return
+    fi
+
+    # 1. Creazione Snapshot di sicurezza
+    local SNAP_NAME="${SNAP_PREFIX}_$(date +%Y%m%d_%H%M%S)"
+    echo -e "${YELLOW}-> Creazione snapshot: $SNAP_NAME...${NC}"
+    if ! pct snapshot $LXC_ID "$SNAP_NAME" --description "Pre-upgrade Debian script"; then
+        echo -e "${RED}ERRORE: Impossibile creare lo snapshot. Interruzione per sicurezza.${NC}"
+        return
+    fi
+
+    # 2. Gestione Major Upgrade (sed)
+    if [ ! -z "$NEW_CODENAME" ]; then
+        echo -e "${YELLOW}!!! MAJOR UPGRADE: ${OLD_CODENAME} -> ${NEW_CODENAME} !!!${NC}"
+        MOD_CMD="sed -i 's/${OLD_CODENAME}/${NEW_CODENAME}/g' /etc/apt/sources.list"
+        pct exec $LXC_ID -- bash -c "$MOD_CMD"
+    fi
+
+    # 3. Esecuzione Aggiornamento
+    echo -e "${YELLOW}-> Esecuzione comandi APT...${NC}"
+    pct exec $LXC_ID -- bash -c "export DEBIAN_FRONTEND=noninteractive && $UPDATE_CMD"
+
+    if [[ $? -eq 0 ]]; then
+        echo -e "${GREEN}Aggiornamento completato. Riavvio in corso...${NC}"
+        pct reboot $LXC_ID
+    else
+        echo -e "${RED}ERRORE durante l'aggiornamento. Ripristinare lo snapshot $SNAP_NAME se necessario.${NC}"
+    fi
+}
+
+# --- LOGICA INTERATTIVA (GUI) ---
 if [ "$#" -eq 0 ]; then
-    echo "Uso: $0 <all|ID_LXC> [nuovo_nome_in_codice] [vecchio_nome_in_codice]"
-    echo "Esempio Minor Upgrade (patch): $0 100"
-    echo "Esempio Major Upgrade (tutti da default a nuovo): $0 all chimaera"
-    echo "Esempio Major Upgrade (singolo da bookworm a trixie): $0 100 trixie bookworm"
-    exit 1
-fi
+    if ! command -v whiptail &> /dev/null; then echo "Errore: whiptail non trovato."; exit 1; fi
 
-# 2. Assegnazione e Loop
+    # 1. Scelta Container
+    LXC_RAW=$(pct list | awk 'NR>1 {print $1 " [" $3 "] off"}')
+    LXC_MENU="ALL [Tutti_i_container] off $LXC_RAW"
+    CHOICES=$(whiptail --title "Debian Update Manager" --checklist "Seleziona LXC da aggiornare:" 20 75 10 $LXC_MENU 3>&1 1>&2 2>&3)
+    [ -z "$CHOICES" ] && exit 0
+    CHOICES=$(echo "$CHOICES" | tr -d '"')
+    [[ " $CHOICES " == *" ALL "* ]] && CHOICES="all"
 
-if [[ "$1" == "all" ]]; then
-    # Scenario 1: Aggiorna TUTTI (usando il default per la versione corrente)
-    echo -e "${GREEN}Trovati tutti i container in esecuzione...${NC}"
-    LXC_LIST=$(/usr/sbin/pct list | grep running | awk '{print $1}')
+    # 2. Scelta Tipo Aggiornamento
+    UP_TYPE=$(whiptail --title "Tipo di Aggiornamento" --menu "Cosa vuoi fare?" 15 60 4 \
+        "MINOR" "Patch e upgrade della versione attuale" \
+        "MAJOR" "Cambio di versione (es. bookworm -> trixie)" 3>&1 1>&2 2>&3)
     
+    NEW_CN=""
+    OLD_CN=""
+
+    if [ "$UP_TYPE" == "MAJOR" ]; then
+        OLD_CN=$(whiptail --inputbox "Codename ATTUALE (es. bookworm):" 10 60 "$CURRENT_CODENAME_DEFAULT" 3>&1 1>&2 2>&3)
+        NEW_CN=$(whiptail --inputbox "Codename NUOVO (es. trixie):" 10 60 "" 3>&1 1>&2 2>&3)
+        [ -z "$NEW_CN" ] && { echo "Annullato: Codename mancante."; exit 1; }
+    fi
+
+    # Esecuzione Loop GUI
+    LXC_LIST=""
+    if [ "$CHOICES" == "all" ]; then
+        LXC_LIST=$(pct list | grep running | awk '{print $1}')
+    else
+        LXC_LIST=$CHOICES
+    fi
+
     for ID in $LXC_LIST; do
-        # Passa solo ID e NUOVO_CODENAME. CURRENT_CODENAME viene preso da DEFAULT
-        update_lxc $ID $NEW_CODENAME
+        update_lxc "$ID" "$NEW_CN" "$OLD_CN"
     done
-    
-elif [[ "$1" =~ ^[0-9]+$ ]]; then
-    # Scenario 2: Aggiorna SINGOLO ID
-    LXC_ID_SINGLE="$1"
-    
-    echo -e "${GREEN}Inizio aggiornamento per LXC ID ${LXC_ID_SINGLE}...${NC}"
-
-    # Passa ID, NUOVO_CODENAME ($2), e la versione corrente opzionale ($3)
-    update_lxc $LXC_ID_SINGLE $NEW_CODENAME $3
-
-else
-    # Scenario 3: Argomento non valido
-    echo -e "${RED}ERRORE: Argomento non valido. Deve essere 'all' o un ID LXC numerico.${NC}"
-    echo "Uso: $0 <all|ID_LXC> [nuovo_nome_in_codice] [vecchio_nome_in_codice]"
-    echo "Esempio Major Upgrade (singolo da bookworm a trixie): $0 100 trixie bookworm"
-    exit 1
+    echo -e "\n${GREEN}Tutte le operazioni completate.${NC}"
+    exit 0
 fi
 
-echo -e "${GREEN}Tutte le operazioni completate.${NC}"
+# --- LOGICA CLI (Se vengono passati argomenti) ---
+case "$1" in
+    -h|--help) show_help ;;
+    all)
+        LXC_LIST=$(pct list | grep running | awk '{print $1}')
+        for ID in $LXC_LIST; do update_lxc "$ID" "$2"; done
+        ;;
+    *)
+        if [[ "$1" =~ ^[0-9]+$ ]]; then
+            update_lxc "$1" "$2" "$3"
+        else
+            show_help
+        fi
+        ;;
+esac
+
+echo -e "\n${GREEN}Operazioni completate.${NC}"
