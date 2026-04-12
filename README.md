@@ -1,165 +1,108 @@
 
-# 🇮🇹 README.md (Italiano) Aggiornato
+---
 
-# 🚀 Proxmox LXC OS Update Script (Debian 13+)
+# 🇮🇹 README.md (Italiano) - Versione 2.1.0
 
-Questo script Bash è progettato per semplificare l'amministrazione di container LXC su Proxmox VE. Consente di eseguire aggiornamenti di sistema completi (sia **Minor** che **Major Releases**) sui container basati su **Debian 13 (Trixie)** o successivi, il tutto direttamente dall'host Proxmox con un unico comando.
+# 🚀 Proxmox LXC OS Update Script (Debian & Major Upgrade)
 
-Il processo utilizza il comando nativo `pct exec` per garantire la massima integrazione.
+Questo script Bash avanzato è progettato per semplificare la manutenzione dei container LXC su Proxmox VE. Grazie a un'interfaccia ibrida (GUI interattiva e CLI), permette di gestire aggiornamenti di sicurezza (**Minor**) e passaggi di versione (**Major Upgrade**) con estrema facilità e sicurezza.
 
-## Funzionalità
-
-  * **Aggiornamento Minor (Patch/Point Release):** Aggiorna tutti i pacchetti all'interno della versione Debian corrente (es. 13.1 a 13.2).
-  * **Aggiornamento Major (Release Upgrade):** Esegue l'aggiornamento completo della distribuzione (es. da Debian 13 "Trixie" a Debian 14 "Chimaera") modificando i repository di `apt` in modo automatico.
-  * **Targeting Flessibile:** Supporta l'aggiornamento di tutti i container in stato `running` (`all`) o solo di container specifici tramite il loro ID.
-  * **Gestione Versioni Specifiche:** Permette di specificare la versione corrente (`VECCHIO_CODENAME`) per gli aggiornamenti Major di singoli container, garantendo flessibilità tra LXC con versioni Debian diverse.
-  * **Robustezza:** Include il riavvio automatico per applicare le modifiche al kernel o ai servizi critici.
+## ✨ Novità Versione 2.1.x
+* **Interfaccia Grafica (GUI):** Menu interattivo basato su `whiptail` per chi preferisce non usare la riga di comando.
+* **Gestione Snapshot:** Creazione automatica di snapshot prima di ogni aggiornamento per un rollback immediato in caso di errori.
+* **Pulizia Automatica:** Opzione per eliminare lo snapshot creato se l'aggiornamento va a buon fine.
+* **Supporto Major Upgrade:** Automazione del cambio repository (es. da *Bookworm* a *Trixie*).
 
 ## 🛠️ Prerequisiti
-
-  * Sistema Host: Proxmox VE.
-  * Container: LXC basati su **Debian 13 (Trixie)** o successivi.
-  * Lo script deve essere eseguito come utente **root** sull'host.
+* **Host:** Proxmox VE con utente `root`.
+* **Container:** LXC basati su Debian (testato da Debian 12+).
+* **Pacchetti:** `whiptail` (solitamente preinstallato su Proxmox).
 
 ## 🚀 Utilizzo
 
-Lo script è progettato per essere eseguito direttamente dalla shell del tuo host Proxmox.
+Puoi lanciare lo script direttamente dal tuo terminale Proxmox.
 
-### Metodo Consigliato (Esecuzione Diretta da GitHub)
-
-Utilizza `curl` per scaricare ed eseguire lo script in un unico passaggio, passando gli argomenti:
-
+### 🖥️ Modalità Interattiva (GUI)
+Se lanci lo script senza argomenti, si aprirà un menu guidato:
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/fcaronte/proxmox_os_lxc_update/main/update-os-lxc.sh)" -- <ARGOMENTI>
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/fcaronte/proxmox_os_lxc_update/main/update-os-lxc.sh)"
+```
+1.  **Selezione LXC:** Scegli quali container aggiornare dalla lista dei container attivi.
+2.  **Sicurezza:** Scegli se creare uno snapshot e se pulirlo automaticamente alla fine (Default: Snapshot attivo, Pulizia disattivata).
+3.  **Tipo Upgrade:** Scegli tra `MINOR` (solo patch) o `MAJOR` (cambio versione).
+
+---
+
+### ⌨️ Modalità Riga di Comando (CLI)
+Per automazioni o utenti avanzati, lo script accetta diversi parametri:
+
+#### 1. Aggiornamento Minor (Patch di sicurezza)
+Esegue `apt update`, `upgrade` e `full-upgrade` sulla versione attuale.
+* **Tutti i container:** `... -- all`
+* **Singolo ID:** `... -- 100`
+
+#### 2. Aggiornamento Major (Cambio Versione)
+Modifica i file `sources.list` e aggiorna l'intero sistema.
+* **Esempio:** Aggiorna il container 100 a *Trixie*:
+    `... -- 100 trixie`
+* **Esempio con versione partenza specifica:** Aggiorna da *Bookworm* a *Trixie*:
+    `... -- 100 trixie bookworm`
+
+#### 3. Opzioni Speciali (Flag)
+Puoi aggiungere questi flag alla fine di qualsiasi comando CLI:
+* `--no-snap`: Salta completamente la creazione dello snapshot (più veloce, meno sicuro).
+* `--clean`: Rimuove lo snapshot creato se l'aggiornamento si conclude con successo.
+
+---
+
+## 💡 Esempi Pratici CLI
+
+**Aggiorna tutti i container (solo patch) con pulizia snapshot finale:**
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/fcaronte/proxmox_os_lxc_update/main/update-os-lxc.sh)" -- all --clean
 ```
 
-Sostituisci `<ARGOMENTI>` con una delle opzioni seguenti.
-
------
-
-### Modalità 1: Aggiornamento Minor (Patch/Point Release)
-
-Questo aggiornamento esegue `apt update`, `apt upgrade`, `apt full-upgrade` e `apt autoremove` sui repository attuali.
-
-| Target | Sintassi d'Esempio |
-| :--- | :--- |
-| **TUTTI** i container running | `-- all` |
-| **SINGOLI** container (ID 8006, 8007) | `-- 8006 8007` |
-
------
-
-### Modalità 2: Aggiornamento Major (Cambio Versione)
-
-Questa modalità esegue il `sed` per sostituire il nome in codice nei file `/etc/apt/sources.list` dei container, seguito dall'aggiornamento completo.
-
-#### A. Aggiornamento Major per TUTTI (Usa Versione di Default)
-
-Se tutti i tuoi LXC sono alla versione di default definita nello script (`CURRENT_CODENAME_DEFAULT`):
-
-| Target | Sintassi | Esempio |
-| :--- | :--- | :--- |
-| **TUTTI** i container | `-- all <NUOVO_CODENAME>` | `-- all chimaera` |
-
-#### B. Aggiornamento Major per Singolo LXC (Uso Flessibile)
-
-Se devi aggiornare un container la cui versione di partenza non è quella di default (es. è ancora Bookworm), puoi specificare tre argomenti.
-
-| Target | Sintassi | Esempio |
-| :--- | :--- | :--- |
-| **SINGOLO** container | `-- <ID_LXC> <NUOVO_CODENAME> <VECCHIO_CODENAME>` | `-- 100 trixie bookworm` |
-
------
-
-## Esempio di Utilizzo
-
-Per eseguire l'aggiornamento Major (a **Trixie**) sul solo container **101**, assumendo che sia ancora su **Bookworm**:
-
+**Passaggio Major da Bookworm a Trixie per il container 105:**
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/fcaronte/proxmox_os_lxc_update/main/update-os-lxc.sh)" -- 101 trixie bookworm
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/fcaronte/proxmox_os_lxc_update/main/update-os-lxc.sh)" -- 105 trixie bookworm
 ```
 
------
+---
 
+# 🇬🇧 README.md (English) - Version 2.1.0
 
-# 🇬🇧 README.md (English)
+# 🚀 Proxmox LXC OS Update Script (Debian & Major Upgrade)
 
-# 🚀 Proxmox LXC OS Update Script (Debian 13+)
+An advanced Bash script designed to streamline LXC container maintenance on Proxmox VE. Featuring a hybrid interface (Interactive GUI and CLI), it handles security patches (**Minor**) and distribution upgrades (**Major Upgrade**) with ease and built-in safety.
 
-This Bash script is designed to simplify the administration of LXC containers on Proxmox VE. It allows you to perform full system updates (both **Minor** and **Major Releases**) on containers based on **Debian 13 (Trixie)** or later, all from the Proxmox host using a single command.
-
-The process leverages the native `pct exec` command for maximum integration.
-
-## Features
-
-  * **Minor Update (Patch/Point Release):** Updates all packages within the current Debian major version (e.g., 13.1 to 13.2).
-  * **Major Update (Release Upgrade):** Performs the full distribution upgrade (e.g., from Debian 13 "Trixie" to Debian 14 "Chimaera") by automatically modifying the `apt` repositories.
-  * **Flexible Targeting:** Supports updating all containers in a `running` state (`all`) or only specific containers by their ID.
-  * **Specific Version Handling:** Allows specifying the current version (`OLD_CODENAME`) for Major upgrades of single containers, ensuring flexibility for LXCs with different Debian versions.
-  * **Robustness:** Includes automatic rebooting to apply kernel or critical service changes.
-
-## 🛠️ Prerequisites
-
-  * Host System: Proxmox VE.
-  * Containers: LXC based on **Debian 13 (Trixie)** or later.
-  * The script must be run as the **root** user on the host.
+## ✨ New in Version 2.1.x
+* **Interactive GUI:** `whiptail`-based menus for ease of use.
+* **Snapshot Management:** Automatic snapshot creation before updates for instant rollback if needed.
+* **Auto-Cleanup:** Option to delete the temporary snapshot upon successful update.
+* **Major Upgrade Support:** Automatic repository switching (e.g., from *Bookworm* to *Trixie*).
 
 ## 🚀 Usage
 
-The script is designed to be executed directly from your Proxmox host shell.
-
-### Recommended Method (Direct Execution from GitHub)
-
-Use `curl` to download and execute the script in a single step, passing the arguments:
-
+### 🖥️ Interactive Mode (GUI)
+Run without arguments to open the guided menu:
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/fcaronte/proxmox_os_lxc_update/main/update-os-lxc.sh)" -- <ARGUMENTS>
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/fcaronte/proxmox_os_lxc_update/main/update-os-lxc.sh)"
 ```
 
-Replace `<ARGUMENTS>` with one of the following options.
+### ⌨️ Command Line Mode (CLI)
+#### 1. Minor Update (Security Patches)
+* **All containers:** `... -- all`
+* **Specific ID:** `... -- 100`
 
------
+#### 2. Major Update (Distribution Upgrade)
+* **Update ID 100 to Trixie:** `... -- 100 trixie`
+* **Specify starting version:** `... -- 100 trixie bookworm`
 
-### Mode 1: Minor Update (Patch/Point Release)
+#### 3. Special Flags
+* `--no-snap`: Skip snapshot creation.
+* `--clean`: Remove the snapshot automatically if the update succeeds.
 
-This update performs `apt update`, `apt upgrade`, `apt full-upgrade`, and `apt autoremove` against the current repositories.
+---
 
-| Target | Example Syntax |
-| :--- | :--- |
-| **ALL** running containers | `-- all` |
-| **SPECIFIC** containers (IDs 8006, 8007) | `-- 8006 8007` |
-
------
-
-### Mode 2: Major Update (Version Change)
-
-This mode executes a `sed` command to replace the codename in the containers' `/etc/apt/sources.list` files, followed by the full system upgrade.
-
-#### A. Major Update for ALL Containers (Using Default Current Version)
-
-If all your LXCs are on the default starting version defined in the script (`CURRENT_CODENAME_DEFAULT`):
-
-| Target | Syntax | Example |
-| :--- | :--- | :--- |
-| **ALL** containers | `-- all <NEW_CODENAME>` | `-- all chimaera` |
-
-#### B. Major Update for Single LXC (Flexible Usage)
-
-If you need to upgrade a container whose starting version is *not* the script's default (e.g., it's still Bookworm), you must specify three arguments.
-
-| Target | Syntax | Example |
-| :--- | :--- | :--- |
-| **SINGLE** container | `-- <LXC_ID> <NEW_CODENAME> <OLD_CODENAME>` | `-- 100 trixie bookworm` |
-
------
-
-## Usage Example
-
-To perform a Major Upgrade (to **Trixie**) on container **101** only, assuming it is currently on **Bookworm**:
-
-```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/fcaronte/proxmox_os_lxc_update/main/update-os-lxc.sh)" -- 101 trixie bookworm
-```
-
------
-
-Qual è il prossimo elemento che vuoi configurare nel tuo ambiente? Ad esempio, NGINX Proxy Manager, Frigate o un altro servizio?
+## 🛡️ Safety Note
+By default, the script creates a snapshot named `DEB_UPGRADE_SNAP_...`. If an update fails, the snapshot is **kept** to allow you to restore the container from the Proxmox UI.
