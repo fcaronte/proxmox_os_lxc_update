@@ -1,13 +1,13 @@
 
 ---
 
-# 🇮🇹 README.md (Italiano) - Versione 2.1.0
+# 🇮🇹 README.md (Italiano) - Versione 2.2.0
 
 # 🚀 Proxmox LXC OS Update Script (Debian & Major Upgrade)
 
 Questo script Bash avanzato è progettato per semplificare la manutenzione dei container LXC su Proxmox VE. Grazie a un'interfaccia ibrida (GUI interattiva e CLI), permette di gestire aggiornamenti di sicurezza (**Minor**) e passaggi di versione (**Major Upgrade**) con estrema facilità e sicurezza.
 
-## ✨ Novità Versione 2.1.x
+## ✨ Novità Versione 2.2.x
 * **Interfaccia Grafica (GUI):** Menu interattivo basato su `whiptail` per chi preferisce non usare la riga di comando.
 * **Gestione Snapshot:** Creazione automatica di snapshot prima di ogni aggiornamento per un rollback immediato in caso di errori.
 * **Pulizia Automatica:** Opzione per eliminare lo snapshot creato se l'aggiornamento va a buon fine.
@@ -69,13 +69,13 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/fcaronte/proxmox_os_lxc_
 
 ---
 
-# 🇬🇧 README.md (English) - Version 2.1.0
+# 🇬🇧 README.md (English) - Version 2.2.0
 
 # 🚀 Proxmox LXC OS Update Script (Debian & Major Upgrade)
 
 An advanced Bash script designed to streamline LXC container maintenance on Proxmox VE. Featuring a hybrid interface (Interactive GUI and CLI), it handles security patches (**Minor**) and distribution upgrades (**Major Upgrade**) with ease and built-in safety.
 
-## ✨ New in Version 2.1.x
+## ✨ New in Version 2.2.x
 * **Interactive GUI:** `whiptail`-based menus for ease of use.
 * **Snapshot Management:** Automatic snapshot creation before updates for instant rollback if needed.
 * **Auto-Cleanup:** Option to delete the temporary snapshot upon successful update.
