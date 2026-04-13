@@ -1,9 +1,22 @@
 #!/bin/bash
 
 # ======================================================================
-# SCRIPT: update-debian.sh
-# VERSIONE: 2.1.0 (GUI/CLI with Snapshot Management)
+# SCRIPT: update-os-lxc.sh
+# VERSIONE: 2.2.0 (Adaptive Layout & Fix Cancel)
 # ======================================================================
+
+# --- RILEVAMENTO DIMENSIONI ADATTIVE ---
+TERM_WIDTH=$(tput cols 2>/dev/null || echo 80)
+TERM_HEIGHT=$(tput lines 2>/dev/null || echo 24)
+
+IFACE_WIDTH=$(( TERM_WIDTH * 90 / 100 ))
+[ $IFACE_WIDTH -gt 75 ] && IFACE_WIDTH=75
+[ $IFACE_WIDTH -lt 45 ] && IFACE_WIDTH=45
+
+IFACE_HEIGHT=$(( TERM_HEIGHT * 80 / 100 ))
+[ $IFACE_HEIGHT -lt 16 ] && IFACE_HEIGHT=16
+
+LIST_HEIGHT=$(( IFACE_HEIGHT - 8 ))
 
 # --- COLORI ---
 RED='\033[0;31m'
@@ -89,29 +102,42 @@ if [ "$#" -eq 0 ]; then
 
     # 1. Scelta Container
     LXC_RAW=$(pct list | awk 'NR>1 {print $1 " [" $3 "] off"}')
-    LXC_MENU="ALL [Tutti_i_container] off $LXC_RAW"
-    CHOICES=$(whiptail --title "Debian Update Manager" --checklist "Seleziona LXC da aggiornare:" 20 75 10 $LXC_MENU 3>&1 1>&2 2>&3)
+    LXC_MENU="ALL [Tutti] off $LXC_RAW"
+    CHOICES=$(whiptail --title "Debian Update Manager" \
+        --checklist "Seleziona LXC da aggiornare (Spazio per selezionare):" \
+        $IFACE_HEIGHT $IFACE_WIDTH $LIST_HEIGHT \
+        $LXC_MENU 3>&1 1>&2 2>&3)
+
+    if [ $? -ne 0 ]; then echo -e "\n${YELLOW}Annullato.${NC}"; exit 0; fi    
     [ -z "$CHOICES" ] && exit 0
     CHOICES=$(echo "$CHOICES" | tr -d '"')
     [[ " $CHOICES " == *" ALL "* ]] && CHOICES="all"
 
     # 2. Scelta Opzioni Snapshot
-    SNAP_OPTS=$(whiptail --title "Gestione Snapshot" --checklist "Opzioni di sicurezza:" 15 60 2 \
+    SNAP_OPTS=$(whiptail --title "Gestione Snapshot" \
+        --checklist "Opzioni di sicurezza:" \
+        $IFACE_HEIGHT $IFACE_WIDTH 5 \
         "nosnap" "Salta creazione snapshot" OFF \
         "clean" "Rimuovi snapshot se OK" ON 3>&1 1>&2 2>&3)
+
+    if [ $? -ne 0 ]; then echo -e "\n${YELLOW}Annullato.${NC}"; exit 0; fi    
     
     [[ "$SNAP_OPTS" == *"nosnap"* ]] && SKIP_SNAPSHOT=true
     [[ "$SNAP_OPTS" == *"clean"* ]] && CLEAN_SNAPSHOT=true
 
     # 3. Scelta Tipo Aggiornamento
-    UP_TYPE=$(whiptail --title "Tipo di Aggiornamento" --menu "Cosa vuoi fare?" 15 60 4 \
+    UP_TYPE=$(whiptail --title "Tipo di Aggiornamento" \
+        --menu "Cosa vuoi fare?" \
+        $IFACE_HEIGHT $IFACE_WIDTH 4 \
         "MINOR" "Patch e upgrade attuale" \
         "MAJOR" "Cambio versione (es. bookworm -> trixie)" 3>&1 1>&2 2>&3)
     
+    if [ $? -ne 0 ]; then echo -e "\n${YELLOW}Annullato.${NC}"; exit 0; fi
+    
     NEW_CN=""
     if [ "$UP_TYPE" == "MAJOR" ]; then
-        NEW_CN=$(whiptail --inputbox "Codename NUOVO (es. trixie):" 10 60 "" 3>&1 1>&2 2>&3)
-        [ -z "$NEW_CN" ] && exit 1
+        NEW_CN=$(whiptail --inputbox "Codename NUOVO (es. trixie):" 10 $IFACE_WIDTH "" 3>&1 1>&2 2>&3)
+        if [ $? -ne 0 ] || [ -z "$NEW_CN" ]; then echo -e "\n${YELLOW}Annullato.${NC}"; exit 0; fi
     fi
 
     # Esecuzione Loop
