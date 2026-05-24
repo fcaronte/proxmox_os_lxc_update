@@ -2,8 +2,11 @@
 
 # ======================================================================
 # SCRIPT: update-os-lxc.sh
-# VERSIONE: 2.2.0 (Adaptive Layout & Fix Cancel)
+# VERSIONE: 2.5.0 (Fix Argomenti Background su /tmp/script.sh)
 # ======================================================================
+
+LOG_FILE="/root/script.tmp"
+SCRIPT_FISICO="/tmp/script.sh"
 
 # --- RILEVAMENTO DIMENSIONI ADATTIVE ---
 TERM_WIDTH=$(tput cols 2>/dev/null || echo 80)
@@ -102,7 +105,7 @@ if [ "$#" -eq 0 ]; then
 
     # 1. Scelta Container
     LXC_RAW=$(pct list | awk 'NR>1 {print $1 " [" $3 "] off"}')
-    LXC_MENU="ALL [Tutti] off $LXC_RAW"
+    LXC_MENU="BACKGROUND [Esegui_in_background] off ALL [Tutti] off $LXC_RAW"
     CHOICES=$(whiptail --title "Debian Update Manager" \
         --checklist "Seleziona LXC da aggiornare (Spazio per selezionare):" \
         $IFACE_HEIGHT $IFACE_WIDTH $LIST_HEIGHT \
@@ -111,6 +114,11 @@ if [ "$#" -eq 0 ]; then
     if [ $? -ne 0 ]; then echo -e "\n${YELLOW}Annullato.${NC}"; exit 0; fi    
     [ -z "$CHOICES" ] && exit 0
     CHOICES=$(echo "$CHOICES" | tr -d '"')
+    
+    # Intercettiamo se l'utente vuole il background
+    IS_PERSISTENT=false
+    [[ " $CHOICES " == *" BACKGROUND "* ]] && { IS_PERSISTENT=true; CHOICES=$(echo "$CHOICES" | sed 's/BACKGROUND//g'); }
+    
     [[ " $CHOICES " == *" ALL "* ]] && CHOICES="all"
 
     # 2. Scelta Opzioni Snapshot
@@ -140,24 +148,66 @@ if [ "$#" -eq 0 ]; then
         if [ $? -ne 0 ] || [ -z "$NEW_CN" ]; then echo -e "\n${YELLOW}Annullato.${NC}"; exit 0; fi
     fi
 
-    # Esecuzione Loop
+    # Configurazione Flag per il rilancio CLI
+    CLI_ARGS=""
+    [ "$SKIP_SNAPSHOT" = true ] && CLI_ARGS="$CLI_ARGS --no-snap"
+    [ "$CLEAN_SNAPSHOT" = true ] && CLI_ARGS="$CLI_ARGS --clean"
+
+    # STRATEGIA BACKGROUND PER /tmp/script.sh
+    if [ "$IS_PERSISTENT" = true ]; then
+        > "$LOG_FILE"
+        
+        echo -e "🚀 Aggiornamento avviato in background alle $(date)\n" >> "$LOG_FILE"
+        
+        # Per evitare che la logica CLI si confonda con i parametri multipli,
+        # passiamo gli ID uno dopo l'altro e iniettiamo il codename (se vuoto passiamo un segnaposto)
+        CODENAME_PARAM="${NEW_CN:-_minor_}"
+        
+        nohup bash "$SCRIPT_FISICO" $CHOICES "$CODENAME_PARAM" $CLI_ARGS >> "$LOG_FILE" 2>&1 &
+        
+        echo -e "${GREEN}🚀 Processo inviato in background con successo!${NC}"
+        echo -e "⚠️  Se la connessione Tailscale cade, l'aggiornamento CONTINUERÀ comunque."
+        echo -e "--------------------------------------------------------"
+        echo -e "📋 Apertura dei log in corso... (Premi Ctrl+C per uscire senza fermare i task)\n"
+        sleep 1
+        
+        tail -f "$LOG_FILE"
+        exit 0
+    fi
+
+    # Esecuzione standard se BACKGROUND non è selezionato
     LXC_LIST=$([[ "$CHOICES" == "all" ]] && pct list | grep running | awk '{print $1}' || echo $CHOICES)
     for ID in $LXC_LIST; do update_lxc "$ID" "$NEW_CN"; done
     exit 0
 fi
 
 # --- LOGICA CLI ---
-# Parsing basico opzioni
 [[ "$*" == *"--no-snap"* ]] && SKIP_SNAPSHOT=true
 [[ "$*" == *"--clean"* ]] && CLEAN_SNAPSHOT=true
 
 case "$1" in
     all)
+        # Se viene passato il segnaposto _minor_, puliamo la variabile
+        CN_CLI="$2"
+        [[ "$CN_CLI" == "_minor_" ]] && CN_CLI=""
         LXC_LIST=$(pct list | grep running | awk '{print $1}')
-        for ID in $LXC_LIST; do update_lxc "$ID" "$2"; done
+        for ID in $LXC_LIST; do update_lxc "$ID" "$CN_CLI"; done
         ;;
     [0-9]*)
-        update_lxc "$1" "$2" "$3"
+        # Cerca se tra i parametri c'è il codename (identificato come testo che non inizia con --)
+        CN_CLI=""
+        for ARG in "$@"; do
+            if [[ ! "$ARG" =~ ^[0-9]+$ && ! "$ARG" =~ ^--.*$ && "$ARG" != "$0" ]]; then
+                CN_CLI="$ARG"
+                break
+            fi
+        done
+        [[ "$CN_CLI" == "_minor_" ]] && CN_CLI=""
+
+        # Cicla su tutti gli ID numerici passati
+        for TARGET_ID in "$@"; do
+            [[ "$TARGET_ID" =~ ^[0-9]+$ ]] && update_lxc "$TARGET_ID" "$CN_CLI"
+        done
         ;;
     *)
         show_help
