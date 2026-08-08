@@ -2,7 +2,7 @@
 
 # ======================================================================
 # SCRIPT: update-os-lxc.sh
-# VERSIONE: 2.5.0 (Fix Argomenti Background su /tmp/script.sh)
+# VERSIONE: 2.5.1 (Fix Anti-Disconnessione SSH/Tailscale & Non-Interactive APT)
 # ======================================================================
 
 LOG_FILE="/root/script.tmp"
@@ -31,7 +31,9 @@ NC='\033[0m'
 # --- DEFAULT ---
 CURRENT_CODENAME_DEFAULT="trixie"
 SNAP_PREFIX="DEB_UPGRADE_SNAP"
-UPDATE_CMD="apt update -y && apt upgrade -y && apt full-upgrade -y && apt autoremove --purge -y"
+
+# Comando APT 100% Non-Interattivo e Protetto da blocchi prompt
+UPDATE_CMD="export DEBIAN_FRONTEND=noninteractive; apt-get update -y && apt-get upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' && apt-get dist-upgrade -y -o Dpkg::Options::='--force-confdef' -o Dpkg::Options::='--force-confold' && apt-get autoremove --purge -y"
 
 # Variabili di stato
 SKIP_SNAPSHOT=false
@@ -81,10 +83,10 @@ update_lxc() {
 
     # 3. Esecuzione Aggiornamento
     echo -e "${YELLOW}-> Esecuzione comandi APT...${NC}"
-    pct exec $LXC_ID -- bash -c "export DEBIAN_FRONTEND=noninteractive && $UPDATE_CMD"
+    pct exec $LXC_ID -- bash -c "$UPDATE_CMD"
 
     if [[ $? -eq 0 ]]; then
-        echo -e "${GREEN}Aggiornamento completato.${NC}"
+        echo -e "${GREEN}Aggiornamento completato con successo su LXC ${LXC_ID}.${NC}"
         
         # Pulizia snapshot se richiesto
         if [[ "$CLEAN_SNAPSHOT" = true && ! -z "$CURRENT_SNAP" ]]; then
@@ -92,7 +94,7 @@ update_lxc() {
             pct delsnapshot $LXC_ID "$CURRENT_SNAP"
         fi
         
-        echo -e "${GREEN}Riavvio in corso...${NC}"
+        echo -e "${GREEN}Riavvio LXC in corso...${NC}"
         pct reboot $LXC_ID
     else
         echo -e "${RED}ERRORE nell'aggiornamento. Snapshot $CURRENT_SNAP conservato.${NC}"
@@ -153,17 +155,19 @@ if [ "$#" -eq 0 ]; then
     [ "$SKIP_SNAPSHOT" = true ] && CLI_ARGS="$CLI_ARGS --no-snap"
     [ "$CLEAN_SNAPSHOT" = true ] && CLI_ARGS="$CLI_ARGS --clean"
 
-    # STRATEGIA BACKGROUND PER /tmp/script.sh
+    # STRATEGIA BACKGROUND PER /tmp/script.sh IMMUNE A DISCONNESSIONI
     if [ "$IS_PERSISTENT" = true ]; then
         > "$LOG_FILE"
+        echo -e "🚀 Aggiornamento OS LXC avviato in background totale alle $(date)\n" >> "$LOG_FILE"
         
-        echo -e "🚀 Aggiornamento avviato in background alle $(date)\n" >> "$LOG_FILE"
-        
-        # Per evitare che la logica CLI si confonda con i parametri multipli,
-        # passiamo gli ID uno dopo l'altro e iniettiamo il codename (se vuoto passiamo un segnaposto)
         CODENAME_PARAM="${NEW_CN:-_minor_}"
         
-        nohup bash "$SCRIPT_FISICO" $CHOICES "$CODENAME_PARAM" $CLI_ARGS >> "$LOG_FILE" 2>&1 &
+        # Sub-shell completamente isolata dalla TTY (stdin disattivato)
+        (
+            for TARGET in $CHOICES; do
+                nohup bash "$SCRIPT_FISICO" "$TARGET" "$CODENAME_PARAM" $CLI_ARGS >> "$LOG_FILE" 2>&1
+            done
+        ) </dev/null>/dev/null 2>&1 &
         
         echo -e "${GREEN}🚀 Processo inviato in background con successo!${NC}"
         echo -e "⚠️  Se la connessione Tailscale cade, l'aggiornamento CONTINUERÀ comunque."
@@ -187,14 +191,12 @@ fi
 
 case "$1" in
     all)
-        # Se viene passato il segnaposto _minor_, puliamo la variabile
         CN_CLI="$2"
         [[ "$CN_CLI" == "_minor_" ]] && CN_CLI=""
         LXC_LIST=$(pct list | grep running | awk '{print $1}')
         for ID in $LXC_LIST; do update_lxc "$ID" "$CN_CLI"; done
         ;;
     [0-9]*)
-        # Cerca se tra i parametri c'è il codename (identificato come testo che non inizia con --)
         CN_CLI=""
         for ARG in "$@"; do
             if [[ ! "$ARG" =~ ^[0-9]+$ && ! "$ARG" =~ ^--.*$ && "$ARG" != "$0" ]]; then
@@ -204,7 +206,6 @@ case "$1" in
         done
         [[ "$CN_CLI" == "_minor_" ]] && CN_CLI=""
 
-        # Cicla su tutti gli ID numerici passati
         for TARGET_ID in "$@"; do
             [[ "$TARGET_ID" =~ ^[0-9]+$ ]] && update_lxc "$TARGET_ID" "$CN_CLI"
         done
