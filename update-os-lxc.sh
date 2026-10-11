@@ -2,7 +2,7 @@
 
 # ======================================================================
 # SCRIPT: update-os-lxc.sh
-# VERSIONE: 3.0.0 (APT staccato dalla sessione, LXC critici per ultimi,
+# VERSIONE: 3.0.1 (APT staccato dalla sessione, LXC critici per ultimi,
 #                  riavvio dei critici differito a fine processo)
 # ======================================================================
 
@@ -165,7 +165,7 @@ EOF
 update_lxc() {
     local LXC_ID=$1
     local NEW_CODENAME=$2
-    local OLD_CODENAME=${3:-$CURRENT_CODENAME_DEFAULT}
+    local OLD_CODENAME=$3
     local CURRENT_SNAP=""
     local IS_CRIT=false
     [[ " $CRIT_LIST " == *" $LXC_ID "* ]] && IS_CRIT=true
@@ -197,6 +197,11 @@ update_lxc() {
 
     # 2. Gestione Major Upgrade
     if [[ ! -z "$NEW_CODENAME" && "$NEW_CODENAME" != "--clean" && "$NEW_CODENAME" != "--no-snap" ]]; then
+        # Versione di partenza: argomento CLI, altrimenti rilevata dal container, altrimenti default
+        if [ -z "$OLD_CODENAME" ]; then
+            OLD_CODENAME=$(pct exec "$LXC_ID" -- bash -c '. /etc/os-release && echo "$VERSION_CODENAME"' 2>/dev/null)
+        fi
+        OLD_CODENAME=${OLD_CODENAME:-$CURRENT_CODENAME_DEFAULT}
         echo -e "${YELLOW}!!! MAJOR UPGRADE: ${OLD_CODENAME} -> ${NEW_CODENAME} !!!${NC}"
         pct exec $LXC_ID -- bash -c "sed -i 's/${OLD_CODENAME}/${NEW_CODENAME}/g' /etc/apt/sources.list"
     fi
@@ -232,7 +237,7 @@ update_lxc() {
 
 # Ordina gli LXC (critici per ultimi), li aggiorna e riavvia i critici alla fine
 processa_lista() {
-    local CN=$1; shift
+    local CN=$1 OLD_CN=$2; shift 2
     local NORMAL="" CRIT="" ID
 
     for ID in "$@"; do
@@ -245,7 +250,7 @@ processa_lista() {
     fi
 
     for ID in $NORMAL $CRIT; do
-        update_lxc "$ID" "$CN"
+        update_lxc "$ID" "$CN" "$OLD_CN"
     done
 
     echo -e "\n${CYAN}--- REPORT FINALE ---${NC}"
@@ -339,7 +344,7 @@ if [ "$#" -eq 0 ]; then
     else
         LXC_LIST="$CHOICES"
     fi
-    processa_lista "$NEW_CN" $LXC_LIST
+    processa_lista "$NEW_CN" "" $LXC_LIST
     exit 0
 fi
 
@@ -351,23 +356,24 @@ fi
 
 case "$1" in
     all)
-        CN_CLI="$2"
+        CN_CLI="$2"; OLD_CLI="$3"
         [[ "$CN_CLI" == "_minor_" || "$CN_CLI" == --* ]] && CN_CLI=""
+        [[ "$OLD_CLI" == --* ]] && OLD_CLI=""
         LXC_LIST=$(pct list | awk 'NR>1 && $2=="running" {print $1}')
-        processa_lista "$CN_CLI" $LXC_LIST
+        processa_lista "$CN_CLI" "$OLD_CLI" $LXC_LIST
         ;;
     [0-9]*)
-        CN_CLI=""
+        CN_CLI=""; OLD_CLI=""
         IDS_CLI=()
         for ARG in "$@"; do
             if [[ "$ARG" =~ ^[0-9]+$ ]]; then
                 IDS_CLI+=("$ARG")
-            elif [[ ! "$ARG" =~ ^--.*$ && -z "$CN_CLI" ]]; then
-                CN_CLI="$ARG"
+            elif [[ ! "$ARG" =~ ^--.*$ ]]; then
+                if [ -z "$CN_CLI" ]; then CN_CLI="$ARG"; elif [ -z "$OLD_CLI" ]; then OLD_CLI="$ARG"; fi
             fi
         done
         [[ "$CN_CLI" == "_minor_" ]] && CN_CLI=""
-        processa_lista "$CN_CLI" "${IDS_CLI[@]}"
+        processa_lista "$CN_CLI" "$OLD_CLI" "${IDS_CLI[@]}"
         ;;
     *)
         show_help
